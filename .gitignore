@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+workspace/
+*.cpg.bin
+*.index.scip
+# generated render/IR artifacts (regenerate with `codeviz`)
+viz/*.html
+viz/*.svg
+viz/*.png
+viz/*.dot
+viz/*.cypher
+viz/*.ir.json
+viz/graph.*
+
+# --- never publish (internal analysis + local render/IR artifacts) ---
+ground_truth/
+lab-notebook.md
+extract/*.json
+extract/*.cpg.bin
+extract/*.scip
+extract/bin/
+extract/scip_*
+extract/pysql*.py
+extract/score.py
+extract/resolve_calls.py
+extract/codeviz_scip.py
+workspace/

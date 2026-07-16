@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# code-viz — one CLI over the pipeline. The interactive Cytoscape graph is the DEFAULT view.
+#
+#   codeviz view   <repo|ir.json> [out.html]   Interactive Cytoscape graph  (DEFAULT DISPLAY)
+#   codeviz ir     <repo> <out.ir.json>        Build the canonical IR (Joern + SCIP-ready + SQL/ORM)
+#   codeviz static <repo|ir.json> [prefix]     Graphviz two-tier HTML (overview + detail)
+#   codeviz diff   <repo> <refA> <refB> [pfx]  Git snapshot diff, rendered + opened
+#   codeviz neo4j  <repo|ir.json> [prefix]     Emit Neo4j loader + query pack
+#
+# A <repo> arg is a source dir (IR built on the fly); an *.json arg is a prebuilt IR (fast path).
+set -euo pipefail
+SELF="$0"; while [ -L "$SELF" ]; do t="$(readlink "$SELF")"; case "$t" in /*) SELF="$t";; *) SELF="$(dirname "$SELF")/$t";; esac; done
+CV="$(cd "$(dirname "$SELF")" && pwd)"
+uvpy(){ ( cd "$CV" && uv run --quiet --with sqlglot python "$@" ); }
+
+need_ir(){ # <repo-dir|ir.json> -> path to an ir.json (builds if given a source dir)
+  local in="$1"
+  if [[ "$in" == *.json ]]; then echo "$in"; return; fi
+  local out; out="$(mktemp).ir.json"
+  bash "$CV/viz/build_ir.sh" "$in" "$out" >&2
+  echo "$out"
+}
+
+sub="${1:-view}"; shift || true
+case "$sub" in
+  view)                                   # DEFAULT: interactive cytoscape graph
+    ir="$(need_ir "${1:?usage: codeviz view <repo|ir.json> [out.html]}")"
+    out="${2:-$CV/viz/graph.cyto.html}"
+    uvpy viz/cyto.py "$ir" "$out"
+    command -v open >/dev/null && open "$out" || true
+    echo "interactive graph -> $out" ;;
+  ir)
+    bash "$CV/viz/build_ir.sh" "${1:?repo}" "${2:?out.ir.json}" ;;
+  static)
+    ir="$(need_ir "${1:?repo|ir.json}")"; out="${2:-$CV/viz/graph}"
+    uvpy viz/ir_to_dot.py "$ir" "$out"
+    command -v open >/dev/null && open "$out.html" || true ;;
+  diff)
+    bash "$CV/viz/codeviz-git.sh" diff "$@" ;;
+  neo4j)
+    ir="$(need_ir "${1:?repo|ir.json}")"; out="${2:-$CV/viz/graph}"
+    uvpy viz/ir_to_cypher.py "$ir" "$out"
+    echo "load:  cypher-shell -u neo4j -p <pw> -f $out.load.cypher   (queries: $out.queries.cypher)" ;;
+  -h|--help|help|*)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
