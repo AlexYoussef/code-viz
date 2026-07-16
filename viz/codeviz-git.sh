@@ -5,7 +5,7 @@
 # Snapshots are just committed ir.json files (canonical/deterministic), so any two are diffable.
 set -euo pipefail
 SELF="$0"; while [ -L "$SELF" ]; do t="$(readlink "$SELF")"; case "$t" in /*) SELF="$t";; *) SELF="$(dirname "$SELF")/$t";; esac; done
-CV="$(cd "$(dirname "$SELF")/..")" && pwd)"
+CV="$(cd "$(dirname "$SELF")/.." && pwd)"
 
 _snapshot(){ # repo ref out_ir
   local repo="$1" ref="$2" out="$3" tmp
