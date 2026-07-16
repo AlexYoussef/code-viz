@@ -16,6 +16,8 @@ NODE_STYLE = {
     "module_entry":  ("Mdiamond",  "#ffe0b3"),
     "class":         ("box",       "#e0e0e0"),
     "sql_call":      ("ellipse",   "#f2e2a8"),
+    "llm_call":      ("diamond",   "#d9b3ff"),
+    "llm_endpoint":  ("hexagon",   "#b98be0"),
     "http_call":     ("hexagon",   "#f8d0da"),
     "http_endpoint": ("hexagon",   "#f8d0da"),
     "table":         ("cylinder",  "#c6f0c6"),
@@ -26,6 +28,7 @@ EDGE_STYLE = {
     "invokes": ("#888888", "dashed", "1.0"),
     "reads":   ("#1a7f1a", "solid",  "1.6"),
     "writes":  ("#c0392b", "solid",  "1.6"),
+    "prompts": ("#8e44ad", "solid",  "1.6"),
     "derives": ("#2c6fbf", "dotted", "1.2"),
     "http":    ("#e67e22", "solid",  "1.2"),
     "maps":    ("#888888", "dashed", "1.0"),
@@ -35,6 +38,7 @@ def esc(s): return html.escape(str(s)).replace('"', '\\"')
 
 def short(nid):
     if nid.startswith("db::"): return nid[4:]
+    if nid.startswith("llm::"): return nid[5:]
     if nid.startswith("http::"): return nid[6:][:40]
     if "::" in nid:
         f, q = nid.split("::", 1)
@@ -105,7 +109,7 @@ def overview_dot(nodes, edges):
     return "\n".join(L) + "\n", len(files), len(comps)
 
 def file_of_id(nid):
-    if nid.startswith(("db::", "http::")): return None
+    if nid.startswith(("db::", "llm::", "http::")): return None
     return nid.split("::", 1)[0] if "::" in nid else None
 
 def node_line(n):
@@ -135,7 +139,7 @@ def detail_dot(nodes, edges):
         L.append("  " + node_line(n))
     for e in edges:
         color, style, pw = EDGE_STYLE.get(e["kind"], ("#333333", "solid", "1.0"))
-        lbl = e["kind"] if e["kind"] in ("reads", "writes", "derives", "http") else ""
+        lbl = e["kind"] if e["kind"] in ("reads", "writes", "prompts", "derives", "http") else ""
         L.append(f'  "{esc(e["src"])}" -> "{esc(e["dst"])}" [color="{color}", style={style}, penwidth={pw}'
                  + (f', label="{lbl}"' if lbl else "") + '];')
     L.append('  subgraph cluster_legend { label="Legend"; style=dashed; color="#999999";')

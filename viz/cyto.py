@@ -25,6 +25,8 @@ NODE_STYLE = {
     "module_entry":  ("diamond",         "#ffe0b3"),
     "class":         ("round-rectangle", "#e0e0e0"),
     "sql_call":      ("ellipse",         "#f2e2a8"),
+    "llm_call":      ("diamond",         "#d9b3ff"),
+    "llm_endpoint":  ("hexagon",         "#b98be0"),
     "http_call":     ("hexagon",         "#f8d0da"),
     "http_endpoint": ("hexagon",         "#f8d0da"),
     "table":         ("barrel",          "#c6f0c6"),
@@ -35,6 +37,7 @@ EDGE_STYLE = {
     "invokes": ("#888888", "dashed"),
     "reads":   ("#1a7f1a", "solid"),
     "writes":  ("#c0392b", "solid"),
+    "prompts": ("#8e44ad", "solid"),
     "derives": ("#2c6fbf", "dotted"),
     "http":    ("#e67e22", "solid"),
     "maps":    ("#888888", "dashed"),
@@ -46,6 +49,7 @@ VENDOR = ["dagre.min.js", "cytoscape.min.js",
 def short(nid):
     """Compact label = qualname (short); tables/http show their bare name."""
     if nid.startswith("db::"):   return nid[4:]
+    if nid.startswith("llm::"):  return nid[5:]
     if nid.startswith("http::"): return nid[6:][:40]
     if "::" in nid:
         f, q = nid.split("::", 1)
@@ -54,7 +58,7 @@ def short(nid):
 
 
 def file_of_id(nid):
-    if nid.startswith(("db::", "http::")): return None
+    if nid.startswith(("db::", "llm::", "http::")): return None
     return nid.split("::", 1)[0] if "::" in nid else None
 
 
@@ -142,7 +146,7 @@ def cy_style():
     ]
     for kind, (color, dash) in sorted(EDGE_STYLE.items()):
         st = {"line-color": color, "target-arrow-color": color}
-        if kind in ("reads", "writes"): st["width"] = 2.0
+        if kind in ("reads", "writes", "prompts"): st["width"] = 2.0
         if dash == "dashed": st["line-style"] = "dashed"
         if dash == "dotted": st["line-style"] = "dotted"
         S.append({"selector": f'edge[kind = "{kind}"]', "style": st})
@@ -299,7 +303,7 @@ search.oninput = function(){
 };
 
 /* ---- edge-kind toggles ---- */
-['calls','reads','writes','invokes'].forEach(function(k){
+['calls','reads','writes','prompts','invokes'].forEach(function(k){
   var cb = document.getElementById('ek_'+k);
   if(!cb) return;
   cb.onchange = function(){
@@ -342,7 +346,7 @@ def build_html(title, elements, style, vendor_js, diff_controls=""):
             f'</span>{esc(kind)}</span>')
     ek = "".join(
         f'<label class=ek><input type=checkbox id="ek_{k}" checked> {k}</label>'
-        for k in ["calls", "reads", "writes", "invokes"])
+        for k in ["calls", "reads", "writes", "prompts", "invokes"])
     els_json = json.dumps(elements, separators=(",", ":"))
     style_json = json.dumps(style, separators=(",", ":"))
     return f"""<!doctype html><html><head><meta charset=utf-8>

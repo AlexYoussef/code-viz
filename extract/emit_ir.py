@@ -195,6 +195,40 @@ for rel, tree in FILES.items():
                     op, tbls = tables_and_op(s)
                     for t in tbls: db_edges.add((owner, op, t))
 
+# ---- LLM call sites: (owner_fn, provider) ----
+def _recv_attr(f):
+    v = f.value
+    return v.attr if isinstance(v, ast.Attribute) else (v.id if isinstance(v, ast.Name) else None)
+
+def llm_provider(call):
+    """Conservative LLM-SDK call matcher -> provider name, else None."""
+    f = call.func
+    if isinstance(f, ast.Attribute):
+        a, r = f.attr, _recv_attr(f)
+        if a == "create":
+            if r == "messages": return "anthropic"          # client.messages.create
+            if r in ("completions",): return "openai"        # chat.completions.create
+            if r == "responses": return "openai"             # client.responses.create
+        if a in ("completion", "acompletion"): return "litellm"
+        if a in ("generate_content", "generate_content_async"): return "gemini"
+        if a in ("chat", "generate") and r == "ollama": return "ollama"
+        if r == "dspy" and a in ("ChainOfThought", "Predict", "ReAct", "ProgramOfThought", "TypedPredictor", "LM"):
+            return "dspy"
+    if isinstance(f, ast.Name):
+        if f.id in ("ChainOfThought", "Predict", "ReAct"): return "dspy"
+        if f.id == "ChatAnthropic": return "anthropic"
+        if f.id == "ChatOpenAI": return "openai"
+        if f.id in ("completion", "acompletion"): return "litellm"
+    return None
+
+llm_edges = set()   # (owner_fn, provider)
+for rel, tree in FILES.items():
+    for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        owner = f"{rel}::{qual(fn)}"
+        for call in [n for n in ast.walk(fn) if isinstance(n, ast.Call)]:
+            p = llm_provider(call)
+            if p: llm_edges.add((owner, p))
+
 # ---- ORM layer ----
 MODEL_TABLE = {}
 for rel, tree in FILES.items():
@@ -413,6 +447,11 @@ tables = sorted({t for (_o, _op, t) in db_edges})
 for t in tables:
     nodes.append({"id": f"db::{t}", "kind": "table"})
 
+# llm provider nodes (one per distinct provider)
+providers = sorted({p for (_o, p) in llm_edges})
+for p in providers:
+    nodes.append({"id": f"llm::{p}", "kind": "llm_endpoint"})
+
 # sql_call nodes + invokes + reads/writes edges
 ir_edges = []
 # group db_edges by owner, assign deterministic #sqlN
@@ -427,6 +466,17 @@ for owner in sorted(by_owner):
         nodes.append({"id": sid, "kind": "sql_call", "attrs": {"op": op, "table": t}})
         ir_edges.append({"src": owner, "dst": sid, "kind": "invokes"})
         ir_edges.append({"src": sid, "dst": f"db::{t}", "kind": op_kind(op)})
+
+# llm_call nodes + invokes (fn -> llm_call) + prompts (llm_call -> provider)
+llm_by_owner = {}
+for (owner, p) in llm_edges:
+    llm_by_owner.setdefault(owner, []).append(p)
+for owner in sorted(llm_by_owner):
+    for i, p in enumerate(sorted(set(llm_by_owner[owner])), start=1):
+        lid = f"{owner}#llm{i}"
+        nodes.append({"id": lid, "kind": "llm_call", "attrs": {"provider": p}})
+        ir_edges.append({"src": owner, "dst": lid, "kind": "invokes"})
+        ir_edges.append({"src": lid, "dst": f"llm::{p}", "kind": "prompts"})
 
 # calls edges
 for (s, d) in merged:
