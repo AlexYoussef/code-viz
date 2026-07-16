@@ -1,46 +1,66 @@
 #!/usr/bin/env bash
 # code-viz — one CLI over the pipeline. The interactive Cytoscape graph is the DEFAULT view.
 #
-#   codeviz view   <repo|ir.json> [out.html]   Interactive Cytoscape graph  (DEFAULT DISPLAY)
-#   codeviz ir     <repo> <out.ir.json>        Build the canonical IR (Joern + SCIP-ready + SQL/ORM)
-#   codeviz static <repo|ir.json> [prefix]     Graphviz two-tier HTML (overview + detail)
-#   codeviz diff   <repo> <refA> <refB> [pfx]  Git snapshot diff, rendered + opened
-#   codeviz neo4j  <repo|ir.json> [prefix]     Emit Neo4j loader + query pack
+#   codeviz view   [-r] <repo|ir.json> [out.html]  Interactive Cytoscape graph  (DEFAULT DISPLAY)
+#   codeviz ir     [-r] <repo> [out.ir.json]       Build the canonical IR (Joern + SQL/ORM)
+#   codeviz static [-r] <repo|ir.json> [prefix]    Graphviz two-tier HTML (overview + detail)
+#   codeviz diff   <repo> <refA> <refB> [prefix]   Git snapshot diff, rendered + opened
+#   codeviz neo4j  [-r] <repo|ir.json> [prefix]    Emit Neo4j loader + query pack
 #
-# A <repo> arg is a source dir (IR built on the fly); an *.json arg is a prebuilt IR (fast path).
+# The IR for a <repo> lives IN the repo at <repo>/.codeviz/ir.json (committable, deterministic,
+# diffs cleanly in PRs). It is cached + reused; pass -r/--rebuild to force a fresh build.
+# Renders (.html/.svg/...) go to <repo>/.codeviz/ and are auto-gitignored there.
+# An *.ir.json arg is used directly (fast path).
 set -euo pipefail
 SELF="$0"; while [ -L "$SELF" ]; do t="$(readlink "$SELF")"; case "$t" in /*) SELF="$t";; *) SELF="$(dirname "$SELF")/$t";; esac; done
 CV="$(cd "$(dirname "$SELF")" && pwd)"
 uvpy(){ ( cd "$CV" && uv run --quiet --with sqlglot python "$@" ); }
 
-need_ir(){ # <repo-dir|ir.json> -> path to an ir.json (builds if given a source dir)
+# ensure_ir <repo-dir|ir.json> -> path to an ir.json. For a repo, caches at <repo>/.codeviz/ir.json.
+ensure_ir(){
   local in="$1"
   if [[ "$in" == *.json ]]; then echo "$in"; return; fi
-  local out; out="$(mktemp).ir.json"
-  bash "$CV/viz/build_ir.sh" "$in" "$out" >&2
-  echo "$out"
+  local dir="$in/.codeviz" ir="$in/.codeviz/ir.json"
+  mkdir -p "$dir"
+  # commit ir.json; ignore the regenerable renders next to it
+  [[ -f "$dir/.gitignore" ]] || printf '%s\n' \
+    '# code-viz: commit ir.json (deterministic, diffable); ignore regenerable renders' \
+    '*.html' '*.svg' '*.png' '*.dot' '*.cypher' '*.changelog.json' > "$dir/.gitignore"
+  if [[ -f "$ir" && -z "${REBUILD:-}" ]]; then echo "$ir"; return; fi
+  bash "$CV/viz/build_ir.sh" "$in" "$ir" >&2
+  echo "$ir"
 }
+# default render destination for a repo -> inside its .codeviz/ ; for a raw ir.json -> tool viz/
+dest(){ if [[ "$1" == *.json ]]; then echo "$CV/viz/graph"; else echo "$1/.codeviz/graph"; fi; }
+note_ir(){ [[ "$1" != *.json ]] && echo "IR: $1/.codeviz/ir.json  (commit it — deterministic, diffs in PRs)"; }
 
 sub="${1:-view}"; shift || true
+# optional -r/--rebuild flag right after the subcommand
+REBUILD=""; case "${1:-}" in -r|--rebuild) REBUILD=1; shift;; esac
+
 case "$sub" in
   view)                                   # DEFAULT: interactive cytoscape graph
-    ir="$(need_ir "${1:?usage: codeviz view <repo|ir.json> [out.html]}")"
-    out="${2:-$CV/viz/graph.cyto.html}"
+    src="${1:?usage: codeviz view [-r] <repo|ir.json> [out.html]}"
+    ir="$(ensure_ir "$src")"; out="${2:-$(dest "$src").cyto.html}"
     uvpy viz/cyto.py "$ir" "$out"
     command -v open >/dev/null && open "$out" || true
-    echo "interactive graph -> $out" ;;
+    echo "interactive graph -> $out"; note_ir "$src" ;;
   ir)
-    bash "$CV/viz/build_ir.sh" "${1:?repo}" "${2:?out.ir.json}" ;;
+    src="${1:?repo}"
+    if [[ -n "${2:-}" ]]; then bash "$CV/viz/build_ir.sh" "$src" "$2"
+    else REBUILD=1 ensure_ir "$src" >/dev/null; note_ir "$src"; fi ;;
   static)
-    ir="$(need_ir "${1:?repo|ir.json}")"; out="${2:-$CV/viz/graph}"
+    src="${1:?repo|ir.json}"; ir="$(ensure_ir "$src")"; out="${2:-$(dest "$src")}"
     uvpy viz/ir_to_dot.py "$ir" "$out"
-    command -v open >/dev/null && open "$out.html" || true ;;
+    command -v open >/dev/null && open "$out.html" || true
+    echo "static graph -> $out.html"; note_ir "$src" ;;
   diff)
     bash "$CV/viz/codeviz-git.sh" diff "$@" ;;
   neo4j)
-    ir="$(need_ir "${1:?repo|ir.json}")"; out="${2:-$CV/viz/graph}"
+    src="${1:?repo|ir.json}"; ir="$(ensure_ir "$src")"; out="${2:-$(dest "$src")}"
     uvpy viz/ir_to_cypher.py "$ir" "$out"
-    echo "load:  cypher-shell -u neo4j -p <pw> -f $out.load.cypher   (queries: $out.queries.cypher)" ;;
+    echo "load:  cypher-shell -u neo4j -p <pw> -f $out.load.cypher   (queries: $out.queries.cypher)"
+    note_ir "$src" ;;
   -h|--help|help|*)
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac
